@@ -1,0 +1,60 @@
+# ----------------------------------------------------------------------------------------
+# ------------ MUNKI SETUP SCRIPT DEFAULTS -----------------------------------------------
+# Some initialization and defaults you can set manually. Script defaults you should enter
+# are located here. Notes are after each section title and after some variables.
+# ----------------------------------------------------------------------------------------
+
+# ----- MunkiTools Defaults --------------------------------------------------------------
+# There are only one mandatory variable: MUNKI_REPO_URL. The
+#    rest are optional.
+# ----------------------------------------------------------------------------------------
+MUNKITOOLS_INSTALLER="none" # If you have your own installer put it's name here (PKG format)
+MUNKI_REPO_URL="https://your.domain.com/munki_repo"
+MUNKI_REPO_AUTH="Authorization: Basic eXp1AlId0cious" # Mandatory if you are using htaccess
+MUNKI_CLIENTRESOURCE_URL="${MUNKI_REPO_URL_DEFAULT}/client_resources"
+MUNKI_CLIENTRESOURCE_FILE="your_customizations.zip"
+MUNKI_HELP_URL_DEFAULT="https://your.domain.com/help"
+
+# ----- Munki-Enroll Defaults ------------------------------------------------------------
+# This portion of the script will be skipped if you leave MUNKIENROLL_SUBMITURL empty.
+# ----------------------------------------------------------------------------------------
+MUNKIENROLL_SUBMITURL="https://your.domain.com/munki_repo/munki-enroll/enroll.php" # Mandatory if you use Munki Enroll
+HTACCESS_USER="user" # Mandatory if you are using htaccess
+HTACCESS_PASS="password" # Mandatory if you are using htaccess
+MUNKIENROLL_PREFIX="z-" # Optional
+
+# ----- Admin and User Defaults ----------------------------------------------------------
+# WARNING: If you are setting up a computer from scratch (no existing users) you MUST have
+#	at least an admin or a user installed.
+# ----------------------------------------------------------------------------------------
+USER_COMPUTER_SAME_NAME="yes" # Optional. If your computer name should be the same as the user shortname select yes.
+
+# This section is optional. If you do not have a corporate admin account leave ADMIN blank
+# and the script section will be skipped.
+ADMIN="localadmin" # Optional but required to complete that section
+ADMIN_NAME="Local Admin" # Mandatory if you have an admin in the above setting
+AUTH_NODE="local" # Optional; defaults to local if blank. Eventually to include AD, OD, LDAP, etc.
+ADMIN_PWD="password" # Mandatory if you have an admin to install
+
+# Used if you would like the user created with a known default password you can later
+# change.
+USER_CREATE="yes" # Optional; a "yes" will create the user account
+USER_PWD="password" # Optional; be aware that left blank will create an empty password for the user
+
+# ----- Wifi Defaults --------------------------------------------------------------------
+# This portion of the script will be skipped if you leave WIFI_NETWORK empty
+# ----------------------------------------------------------------------------------------
+WIFI_NETWORK="Company Wifi" # Mandatory if you don't plug your computer into ethernet
+WIFI_SEC="WPA2" # Mandatory if you don't plug your computer into ethernet
+WIFI_PWD="password" # Mandatory if you don't plug your computer into ethernet; currently HARDCODED
+
+# ----- System Defaults ------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
+TZ="America/New_York" # Optional; set your timezone for post-run script; left blank sets as GMT
+
+
+# ----- Logfile Info ---------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------
+DATE=$(date +%Y%m%d)
+LOGLOC=/Library/Logs # Location to save the script-generated logfile
+LOG="MunkiInstallScript-${DATE}.log" # In the script this will be renamed to ComputerName-LOG
