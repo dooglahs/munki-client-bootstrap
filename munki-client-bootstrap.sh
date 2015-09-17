@@ -44,8 +44,8 @@ INSTALLERS=${INSTALLERS%/*}
 
 # Script defaults file; mandatory for this script to work.
 # NOTE: There are a few other variables to set in the post-run scripts.
-if [[ -e "${INSTALLERS}"/munki-setup-defaults.txt ]]; then
-	source "${INSTALLERS}"/munki-setup-defaults.txt
+if [[ -e "${INSTALLERS}"/munki-client-bootstrap-defaults.txt ]]; then
+	source "${INSTALLERS}"/munki-client-bootstrap-defaults.txt
 else
 	echo "The munki-setup-defaults.txt file failed to load. Please check that the file exists and run this script again."
 	echo ""

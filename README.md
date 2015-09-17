@@ -1,8 +1,8 @@
-# munki-setup.sh
+# munki-client-bootstrap.sh
 On a Mac computer with an existing Munki Server, this bash script installs MunkiTools client and its base settings, then optionally munki-enroll, the local admin and user, FileVault and a few other items.
 
 ## Specifically...
-munki-setup.sh follows this workflow:
+# munki-client-bootstrap.sh follows this workflow:
 
 1: If figures out if you are on a locally booted Mac or the Recovery Drive.
 
@@ -43,11 +43,11 @@ I use a USB stick that has two partitions:
 
 On the Recover Drive fire up Terminal, `cd` to the folder with the script and then
 
-`./munki-setup.sh`
+`./munki-client-bootstrap.sh`
 
 On an existing booted up OSX computer fire up Terminal, `cd` to the folder with the script and then
 
-`sudo ./munki-setup.sh`
+`sudo ./munki-client-bootstrap.sh`
 
 *On computers that are being staged, create a manifest with base software called "setup" and run the script with the user being called "setup".*
 
@@ -73,8 +73,6 @@ In my environment it didn't make sense to use Deploy Studio, Imagr or NetBoot; a
 
 ## TO DO
 
-- Fix logging. Currently getting an error that the target drive is a read-only volume.
-- I will move all user creation to the post scripts.
 - After reboots, find a way to hide the login screen until it's needed.
 - Include checks for the admin and user in bound domains (currently only uses local node).
 - Locate the primary scripts on a server (so script is centrally maintained) and have a simple local script pull it (either "hdiutil attach URL/script.dmg" or a curl | exec). Idea from [Armin Briegel](http://scriptingosx.com/2015/08/mount-a-dmg-off-a-web-server/).
