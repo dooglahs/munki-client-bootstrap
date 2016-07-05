@@ -1,5 +1,5 @@
 # ----------------------------------------------------------------------------------------
-# ------------ MUNKI SETUP SCRIPT DEFAULTS -----------------------------------------------
+# ------------ BOOTSTRAP SCRIPT DEFAULTS -------------------------------------------------
 # Some initialization and defaults you can set manually. Script defaults you should enter
 # are located here. Notes are after each section title and after some variables.
 # ----------------------------------------------------------------------------------------
@@ -28,6 +28,7 @@ MUNKIENROLL_PREFIX="z-" # Optional
 #	at least an admin or a user installed.
 # ----------------------------------------------------------------------------------------
 USER_COMPUTER_SAME_NAME="yes" # Optional. If your computer name should be the same as the user shortname select yes.
+EMAIL_DOMAIN="@example.com" # Optional, but required if using JumpCloud.
 
 # This section is optional. If you do not have a corporate admin account leave ADMIN blank
 # and the script section will be skipped.
@@ -52,9 +53,22 @@ WIFI_PWD="password" # Mandatory if you don't plug your computer into ethernet; c
 # ----------------------------------------------------------------------------------------
 TZ="America/New_York" # Optional; set your timezone for post-run script; left blank sets as GMT
 
-
 # ----- Logfile Info ---------------------------------------------------------------------
 # ----------------------------------------------------------------------------------------
 DATE=$(date +%Y%m%d)
 LOGLOC=/Library/Logs # Location to save the script-generated logfile
 LOG="MunkiInstallScript-${DATE}.log" # In the script this will be renamed to ComputerName-LOG
+
+# ----- Handling Post Files --------------------------------------------------------------
+# You can set the script to either delete the post files or to move them for analysis
+# ----------------------------------------------------------------------------------------
+POSTFILE_HANDLING="mv" # Accepts -mv- to move files or -rm- to remove files; default to -rm-
+POSTFILE_MV="/Users/Shared" # defines the location to move the post files; default to /Users/Shared
+
+# ----- JumpCloud Defaults ---------------------------------------------------------------
+# Required if you use and plan to install JumpCloud
+# ----------------------------------------------------------------------------------------
+JC="yes" # yes or no (blank for "no" works)
+CONNECT_KEY="xxxxxxxxxx" # from JC Admin Console > Systems > + > Mac Install
+API_KEY="xxxxxxxxxx" # from JC Admin Console > [your username] > API Settings
+JC_TAG="name-of-tag" # default Tag to add the machine into

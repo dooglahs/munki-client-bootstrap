@@ -2,7 +2,9 @@
 # adding -x after "bash" above spits execution to log; useful for diagnosing problems.
 
 # This script is used to bootstrap computers to be managed by an existing Munki instance.
-#	Script is interactive so pay attention to questions. History at the end.
+# It also supports installing and configuring FileVault and JumpCloud.
+
+# Script is interactive so pay attention to questions. History at the end.
 
 # ----------------------------------------------------------------------------------------
 # ------------ MUNKI SETUP SCRIPT --------------------------------------------------------
@@ -33,13 +35,13 @@ if [ ${OS} == OSX ]; then
 fi
 
 # Determines Installers Path
-function INST_PATH() {
-  [ ${1:0:1} == '/' ] && x=$1 || x=${PWD}/$1
-  cd "${x%/*}"
-  echo $( pwd -P )/${x##*/}
-  cd "${OLDPWD}"
+function installPath() {
+	[ ${1:0:1} == '/' ] && x=$1 || x=${PWD}/$1
+	cd "${x%/*}"
+	echo $( pwd -P )/${x##*/}
+	cd "${OLDPWD}"
 }
-INSTALLERS=$( INST_PATH "${BASH_SOURCE[0]}" )
+INSTALLERS=$( installPath "${BASH_SOURCE[0]}" )
 INSTALLERS=${INSTALLERS%/*}
 
 # Script defaults file; mandatory for this script to work.
@@ -47,7 +49,7 @@ INSTALLERS=${INSTALLERS%/*}
 if [[ -e "${INSTALLERS}"/munki-client-bootstrap-defaults.txt ]]; then
 	source "${INSTALLERS}"/munki-client-bootstrap-defaults.txt
 else
-	echo "The munki-setup-defaults.txt file failed to load. Please check that the file exists and run this script again."
+	echo "The munki-client-bootstrap-defaults.txt file failed to load. Please check that the file exists and run this script again."
 	echo ""
 	exit 0
 fi
@@ -105,6 +107,21 @@ else
 	SUDO=""
 fi
 
+# Post file handling, as defined in the defaults file
+if [ ${POSTFILE_HANDLING} == "mv" ]; then
+	POSTFILE_HANDLING=$( echo "mv" )
+else
+	POSTFILE_HANDLING=$( echo "rm" )
+fi
+
+if [ ${POSTFILE_HANDLING} == "rm" ]; then
+	POSTFILE_MV=$( echo "" )
+elif [ ${POSTFILE_MV} != "/Users/Shared" ]; then
+	POSTFILE_MV=$( echo "${POSTFILE_MV}" )
+else
+	POSTFILE_MV="/Users/Shared"
+fi
+
 # Define which user repository to search
 if [[ ${AUTH_NODE} == "" ]] || [[ ${AUTH_NODE} == "local" ]]; then
 	NODE_SEARCH="${TARGET}/var/db/dslocal/nodes/Default/users"
@@ -137,14 +154,19 @@ logger ""
 if [[ ${USER} != "setup" ]]; then
 	read -p "What is the Real Name for ${USER}? Use Firstname Lastname format: " USER_REALNAME;
 	logger ""
+else
+	USER_REALNAME="Setup"
 fi
 if [[ ${USER_COMPUTER_SAME_NAME} == "yes" ]] || [[ ${USER} == "setup" ]]; then
-	NAME=${USER}
+	COMP_NAME=${USER}
 else
-	read -p "What should be the computer be named? " NAME;
+	read -p "What should be the computer be named? " COMP_NAME;
 	logger ""
 fi
-
+if [[ ${JC} == "yes" ]]; then
+	read -p "If the computer has an asset tag number please enter now: " TAG_ID;
+	logger ""
+fi
 sleep 1
 
 # ----------------------------------------------------------------------------------------
@@ -156,36 +178,56 @@ sleep 1
 logger "------------ CONFIRM SETTINGS ------------"
 logger ""
 
+DATE_TIME=$( date )
+logger "             Date and Time: ${DATE_TIME}"
+logger ""
 logger "               Target Path: ${TARGET}"
 logger ""
 logger "            Installer Path: ${INSTALLERS}"
 logger ""
 
 if [[ ${USER} == "setup" ]]; then
-	logger "     Computer and Username: ${NAME}"
+	logger "     Computer and Username: ${COMP_NAME}"
+	if [[ -n ${TAG_ID} ]]; then
+		logger "                 Asset Tag: ${TAG_ID}"
+	fi
 else
 	logger "                 Real Name: ${USER_REALNAME}"
 	logger "            Short Username: ${USER}"
-	logger "             Computer Name: ${NAME}"
+	logger "             Computer Name: ${COMP_NAME}"
+	if [[ ${JC} == "yes" ]]; then
+		logger "                 Asset Tag: ${TAG_ID}"
+	fi
 fi
 logger ""
 read -p "Do those settings look correct? Type yes or no and press [ENTER]: " CORRECT;
 logger ""
 if [[ ${CORRECT} =~ ^([nN][oO]|[nN])$ ]]; then
-	logger "Settings are incorrect. Let's debug the script or run it again."
+	read -p "Is the date or time correct? Type yes or no and press [ENTER]: " TIME_CORRECT;
 	logger ""
-	exit 0
+	if [[ ${TIME_CORRECT} =~ ^([nN][oO]|[nN])$ ]]; then
+		logger "Please enter the correct date and time using the following format"
+		logger "   (month)(day)(hour)(minute)(year)"
+		logger ""
+		logger "Example: September 11th, 2015 at 4:33PM would be: 0911143315"
+		logger ""
+		read -p "What is the correct date and time? " DATE_TIME;
+		${SUDO} date ${DATE_TIME}
+	else
+		logger "Let's debug the script or run it again."
+		logger ""
+		exit 0
+	fi
 else
 	logger "Settings are correct."
 fi
 logger ""
 
-${SUDO} scutil --set ComputerName ${NAME}
-${SUDO} scutil --set HostName ${NAME}
-${SUDO} scutil --set LocalHostName ${NAME}
-${SUDO} defaults write "${TARGET}"/Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string ${NAME}
-logger "Computer is now called \"${NAME}\"."
-
+${SUDO} scutil --set ComputerName "${COMP_NAME}"
+${SUDO} scutil --set HostName "${COMP_NAME}"
+${SUDO} scutil --set LocalHostName "${COMP_NAME}"
+${SUDO} defaults write "${TARGET}"/Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "${COMP_NAME}"
+logger "Computer is now called \"${COMP_NAME}\"."
 logger ""
 sleep 1
 
@@ -209,13 +251,14 @@ elif [ ! -d "${TARGET}"/usr/local/munki ]; then
 	"${TARGET}"/usr/bin/curl -O https://munkibuilds.org/munkitools2-latest.pkg
 	logger "Installing Munki Client from munkibuilds.org..."
 	installer -allowUntrusted -pkg munkitools2-latest.pkg -target "${TARGET}" 2> /dev/null
-	logger "     ...installed"
 	logger ""
 	rm munkitools2-latest.pkg
 	cd "${OLDPWD}"
 else
 	logger "Munki Client already installed."
 fi
+# Kick off Munki on next reboot
+touch "${TARGET}/Users/Shared/.com.googlecode.munki.checkandinstallatstartup"
 logger ""
 sleep 1
 
@@ -245,7 +288,7 @@ logger "Set base Munki Client Preferences."
 # Doing Munki-Enroll...
 if [[ -n ${MUNKIENROLL_SUBMITURL} ]]; then
 	HTACCESS="${HTACCESS_USER}:${HTACCESS_PASS}"
-	IDENTIFIER=${NAME};
+	IDENTIFIER="${COMP_NAME}";
 	HOSTNAME=$( scutil --get ComputerName );
 	"${TARGET}"/usr/bin/curl -u "${HTACCESS}" --max-time 10 --get --data hostname="${HOSTNAME}" --data identifier="${IDENTIFIER}" "${MUNKIENROLL_SUBMITURL}"
 	IDENTIFIER_PATH=$( echo "$IDENTIFIER" | sed 's/\/[^/]*$//' );
@@ -269,8 +312,12 @@ if [[ -n ${ADMIN} ]]; then
 		logger "\"${ADMIN}\" user exists."
 		ADMIN_POST_FLAG="no"
 	else
-		logger "\"${ADMIN}\" user will be created."
 		ADMIN_POST_FLAG="yes"
+#		if [ -e "${TARGET}"/var/db/.AppleSetupUser ]; then
+#			rm "${TARGET}"/var/db/.AppleSetupUser
+#		fi
+		touch "${TARGET}"/var/db/.AppleSetupDone
+		logger "\"${ADMIN}\" user will be created."
 	fi
 	logger ""
 	sleep 1
@@ -279,7 +326,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------------------
-# ------------ User Creation -------------------------------------------------------------
+# ------------ USER CREATION -------------------------------------------------------------
 # This section checks to see if a user already exists on the machine. If not it flags for
 # the user to be installed in post scripts.
 # ----------------------------------------------------------------------------------------
@@ -290,8 +337,12 @@ if [[ ${USER_CREATE} == "yes" ]] && [[ ${USER} != "setup" ]]; then
 		logger "\"${USER}\" user exists."
 		USER_POST_FLAG="no"
 	else
-		logger "\"${USER}\" user will be created."
 		USER_POST_FLAG="yes"
+#		if [ -e "${TARGET}"/var/db/.AppleSetupUser ]; then
+#			rm "${TARGET}"/var/db/.AppleSetupUser
+#		fi
+		touch "${TARGET}"/var/db/.AppleSetupDone
+		logger "\"${USER}\" user will be created."
 	fi
 	logger ""
 	sleep 1
@@ -300,7 +351,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------------------
-# ------------ FileVaultMaster Key -------------------------------------------------------
+# ------------ FILEVAULTMASTER KEY -------------------------------------------------------
 # If you have a FileVaultMaster key and it is in a folder called "FileVaultMaster" in the
 # same directory as this script, it will get installed but *not* activated until the
 # second post script runs.
@@ -319,14 +370,20 @@ if [[ -z ${HAS_FILEVAULTKEY} ]] && [[ -e "${INSTALLERS}"/FileVaultMaster/FileVau
 	logger "Remember to double check that any users not activated by this script are enabled in FileVault!"
 	logger ""
 	FV_POST_FLAG="yes"
+	FV_AUTH_RESTART="yes"
 	sleep 1
+elif [[ -e "${TARGET}"/Library/Keychains/FileVaultMaster.keychain ]]; then
+	FV_AUTH_RESTART="yes"
 else
 	FV_POST_FLAG="no"
+	FV_AUTH_RESTART="no"
 fi
 
 # ----------------------------------------------------------------------------------------
-# ------------ Post Run Script Creation --------------------------------------------------
+# ------------ POST RUN SCRIPT CREATION --------------------------------------------------
 # Creates some scripts to run on reboot if needed.
+# NOTE ABOUT THIS POST RUN SCRIPT. Script is built into /usr/local. If you would prefer
+#  	another location search and replace /usr/local with your selection, i.e. /etc/local/bin.
 # ----------------------------------------------------------------------------------------
 
 logger "------------ POST RUN SCRIPT CREATION ------------"
@@ -336,83 +393,110 @@ if [ -z ${TZ} ]; then
 	TZ="GMT"
 fi
 
-# NOTE ABOUT THESE POST RUN SCRIPTS. Scripts are built into /var. If you would prefer
-#  	another location search and replace /var with your selection, i.e. /etc/local/bin.
+# ----------------------------------------------------------------------------------------
+# ------------ FileVault AuthRestart plist -----------------------------------------------
 
-# This is the LaunchDaemon for first post-run script
-cat >> "${TARGET}"/Library/LaunchDaemons/com.learningobjects.firstpost.plist <<FIRST
+# This conditional section in the event that FileVault is already enabled on the machine
+if [[ ${FV_AUTH_RESTART} == "yes" ]]; then
+	cat > "${TARGET}"/usr/local/fvauthrestart.plist <<AUTHRESTART
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Password</key>
+	<string>${ADMIN_PWD}</string>
+</dict>
+</plist>
+AUTHRESTART
+
+chmod 644 "${TARGET}"/usr/local/fvauthrestart.plist
+chown root:wheel "${TARGET}"/usr/local/fvauthrestart.plist
+fi
+
+# ----------------------------------------------------------------------------------------
+# ------------ Post LaunchDaemon ---------------------------------------------------------
+
+cat > "${TARGET}"/Library/LaunchDaemons/com.learningobjects.pstscrpt.plist <<FIRSTLD
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.learningobjects.firstpost</string>
+	<string>com.learningobjects.pstscrpt</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/var/firstpost.sh</string>
+		<string>/usr/local/pstscrpt.sh</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 </dict>
 </plist>
-FIRST
+FIRSTLD
 
-# This is the first post-run script
-cat >> "${TARGET}"/var/firstpost.sh <<FIRST
+chmod 644 "${TARGET}"/Library/LaunchDaemons/com.learningobjects.pstscrpt.plist
+chown root:wheel "${TARGET}"/Library/LaunchDaemons/com.learningobjects.pstscrpt.plist
+
+# ----------------------------------------------------------------------------------------
+# ------------ Post Script ---------------------------------------------------------------
+
+cat > "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
 #!/bin/bash
-# First post script for bootstrapping Munki.
+# Post script, run as a second stage of the munki-client-bootstrap script.
 logger(){
-	echo "\$1" >> ${LOGLOC}/${NAME}-${LOG}
+	echo "\$1" >> "${LOGLOC}/${COMP_NAME}-${LOG}"
 }
-logger "First post script running."
-FIRST
+logger "------------ PSTSCRPT: Post script running ------------"
+sudo languagesetup -langspec en
+sleep 2
+sudo defaults write /Library/Preferences/.GlobalPreferences AppleLanguages "(en, ja, fr, de, es, it, nl, sv, nb, da, fi, pt, zh-Hans, zh-Hant, ko)"
+sudo defaults write /Library/Preferences/.GlobalPreferences AppleLocale "en_US"
+sudo defaults write /Library/Preferences/.GlobalPreferences Country "en_US"
+PSTSCRPT
 
 # Set the computer name if script run originally from Recovery Drive
 if [ ${OS} == RD ]; then
-	cat >> "${TARGET}"/var/firstpost.sh <<FIRST
+	cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
 # Name the computer
-sudo scutil --set ComputerName ${NAME}
-sudo scutil --set HostName ${NAME}
-sudo scutil --set LocalHostName ${NAME}
-sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string ${NAME}
-logger "FP: computer name set to ${NAME}."
+sudo scutil --set ComputerName "${COMP_NAME}"
+sudo scutil --set HostName "${COMP_NAME}"
+sudo scutil --set LocalHostName "${COMP_NAME}"
+sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.smb.server NetBIOSName -string "${COMP_NAME}"
+logger "Computer name set to \"${COMP_NAME}\"."
 sudo systemsetup -settimezone "${TZ}"
 sudo ntpdate -u time.apple.com
 sleep 10
-FIRST
+PSTSCRPT
 fi
 
 # Conditionally add computer to wifi network
 if [[ -n ${WIFI_NETWORK} ]]; then
-	cat >> "${TARGET}"/var/firstpost.sh <<FIRST
+	cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
 # Get wifi working
 INTERFACE=\$( networksetup -listallhardwareports | grep -E '(Wi-Fi|AirPort)' -A 1 | grep en. | awk -F': ' '{print \$2}' )
 networksetup -addpreferredwirelessnetworkatindex \${INTERFACE} ${WIFI_NETWORK} 0 ${WIFI_SEC} "${WIFI_PWD}"
-logger "FP: wifi network ${WIFI_NETWORK} setup."
+logger "Wifi network ${WIFI_NETWORK} setup."
 sleep 20
-FIRST
+PSTSCRPT
 fi
-cat >> "${TARGET}"/var/firstpost.sh <<FIRST
-cat >> /tmp/secondpost.sh <<SECOND
-#!/bin/bash
-# Second post script for bootstrapping Munki.
-logger(){
-	echo "\\\$1" >> ${LOGLOC}/${NAME}-${LOG}
+
+# Let Munki run till it is done
+cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
+# Delay the script until Managed Software is done running
+logger "Munki is installing packages..."
+munkiRun(){
+	ps axg | grep -v grep | grep 'MunkiStatus' > /dev/null
 }
-logger "Second post script running."
-if [ -n /Library/LaunchDaemons/com.learningobjects.firstpost.plist ]; then
-	rm /Library/LaunchDaemons/com.learningobjects.firstpost.plist
-fi
-if [ -n /var/firstpost.sh ]; then
-	rm /var/firstpost.sh
-fi
-SECOND
-FIRST
+MUNKI_RUN_TRY=0
+while munkiRun; do
+	sleep 20
+	MUNKI_RUN_TRY=\$((MUNKI_RUN_TRY+20))
+	logger "...Munki ran for \${MUNKI_RUN_TRY} seconds."
+done
+PSTSCRPT
 
 # Conditionally append admin installation if needed
 if [[ ${ADMIN_POST_FLAG} == "yes" ]]; then
-	cat >> "${TARGET}"/var/firstpost.sh <<FIRST
-	cat >> /tmp/secondpost.sh <<SECOND
+	cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
 . /etc/rc.common
 sudo dscl . create /Users/${ADMIN}
 sudo dscl . create /Users/${ADMIN} RealName "${ADMIN_NAME}"
@@ -423,60 +507,118 @@ sudo dscl . create /Users/${ADMIN} UserShell /bin/bash
 sudo dscl . create /Users/${ADMIN} NFSHomeDirectory /Users/${ADMIN}
 sudo dseditgroup -o edit -a ${ADMIN} -t user admin
 sudo dscl . -create /Users/${ADMIN} picture "/Library/User Pictures/LO/de-icon.tif"
+logger "Admin user -${ADMIN}- created."
 if [ ! -e /var/db/.AppleSetupDone ]; then
 	sudo touch /var/db/.AppleSetupDone
 fi
-logger "SP: ${ADMIN} created."
-SECOND
-FIRST
+PSTSCRPT
 fi
 
 # Conditionally append user installation if needed
 if [[ ${USER_POST_FLAG} == "yes" ]]; then
-	cat >> "${TARGET}"/var/firstpost.sh <<FIRST
-	cat >> /tmp/secondpost.sh <<SECOND
-NUID=\\\$( dscl . -list /Users UniqueID | awk '{print \\\$2}' | sort -ug | tail -1 )
-NUID=\\\$((NUID+1))
+	cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
+NUID=\$( dscl . -list /Users UniqueID | awk '{print \$2}' | sort -ug | tail -1 )
+NUID=\$((NUID+1))
 . /etc/rc.common
 sudo dscl . create /Users/${USER}
 sudo dscl . create /Users/${USER} RealName "${USER_REALNAME}"
 sudo dscl . passwd /Users/${USER} "${USER_PWD}"
-sudo dscl . create /Users/${USER} UniqueID \\\${NUID}
+sudo dscl . create /Users/${USER} UniqueID \${NUID}
 sudo dscl . create /Users/${USER} PrimaryGroupID 20
 sudo dscl . create /Users/${USER} UserShell /bin/bash
 sudo dscl . create /Users/${USER} NFSHomeDirectory /Users/${USER}
 sudo dseditgroup -o edit -a ${USER} -t user admin
 sudo dscl . -create /Users/${USER} picture "/Library/User Pictures/LO/de-icon.tif"
+logger "User -${USER}- created."
 if [ ! -e /var/db/.AppleSetupDone ]; then
 	sudo touch /var/db/.AppleSetupDone
 fi
-logger "SP: ${USER} created."
-SECOND
-FIRST
+PSTSCRPT
 fi
 
-# Conditionally use fdsetup to activate FileVault
-# Creates user plist for fdsetup
+# JumpCloud installation and machine configuration
+if [[ ${JC} == "yes" ]]; then
+cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
+logger "JumpCloud configuration..."
+# Install the JumpCloud Client if it isn't installed already
+if [ ! -f /opt/jc/jcagent.conf ]; then
+	OLDPWD="\$( pwd )"
+	logger "...OLDPWD is \${OLDPWD}"
+	sudo mkdir -p /opt/jc
+	logger "...Made /opt/jc directory."
+	sudo chmod -R 755 /opt
+	sudo chown root:wheel /opt
+	sudo chown root:admin /opt/jc
+	logger "...Fixed permissions for /opt/jc."
+	sudo cat > /opt/jc/agentBootstrap.json <<JCBOOTSTRAP
+	{
+		"publicKickstartUrl": "https://kickstart.jumpcloud.com:443",
+		"privateKickstartUrl": "https://private-kickstart.jumpcloud.com:443",
+		"connectKey": "${CONNECT_KEY}"
+	}
+JCBOOTSTRAP
+	sudo chown root:admin /opt/jc/agentBootstrap.json
+	sudo chmod 644 /opt/jc/agentBootstrap.json
+	logger "...Made the agentBootstrap.json file and fixed its permissions."
+	sleep 1
+	cd /tmp
+	sudo curl -O "https://s3.amazonaws.com/jumpcloud-windows-agent/production/jumpcloud-agent.pkg"
+	logger "...Downloaded the jumpcloud-agent.pkg installer."
+	sudo installer -allowUntrusted -pkg jumpcloud-agent.pkg -target "${TARGET}" 2> /dev/null
+	JC_TRY=0
+	until [ -f /opt/jc/jcagent.conf ]; do
+		sleep 5
+		JC_TRY=\$((JC_TRY+5))
+		logger "......Waited \${JC_TRY} seconds for JumpCloud to install."
+	done
+	logger "...Installed the JumpCloud client."
+	sudo ${POSTFILE_HANDLING} jumpcloud-agent.pkg "${POSTFILE_MV}"
+	sleep 1
+	cd "\${OLDPWD}"
+fi
+# System-specific JC API calls
+SYSTEM_KEY=\$( sudo cat /opt/jc/jcagent.conf | awk -F":" -v RS="," '\$1~/"systemKey"/ {print \$2}' | sed 's/^"//' | sed 's/".*//' );
+logger "...This computer's systemKey is: \${SYSTEM_KEY}"
+# Set the system name in JC
+curl -iq -d "{ \"displayName\" : \"COMP: ${TAG_ID} ${USER_REALNAME}\"}" -X 'PUT' -H 'Content-Type: application/json' -H 'Accept: application/json' -H "x-api-key: ${API_KEY}" "https://console.jumpcloud.com/api/systems/\${SYSTEM_KEY}"
+logger "...Set the system name in JC to COMP: ${TAG_ID} ${USER_REALNAME}."
+sleep 3
+# Add the system to the OSX tag
+curl -iq -d "{ \"tags\" : [\"${JC_TAG}\"]}" -X 'PUT' -H 'Content-Type: application/json' -H 'Accept: application/json' -H "x-api-key: ${API_KEY}" "https://console.jumpcloud.com/api/systems/\${SYSTEM_KEY}"
+logger "...Added the computer to the ${JC_TAG} JC tag."
+sleep 3
+# User-and-name-specific JC API calls
+if [[ ${USER_POST_FLAG} == "yes" ]]; then
+			#Currently the user must already exist in JumpCloud. Eventually I want it to create the
+			#	user if they are not in JumpCloud but the API does not allow the setting of a password
+			#	so I'll leave the code for now.
+			#USER_FOUND=\$( sudo curl --silent -d "{\"filter\": [{\"username\" : \"${USER}\"}]}" -H 'Content-Type: application/json' -H "x-api-key: ${API_KEY}" "https://console.jumpcloud.com/api/search/systemusers" --stderr - | sed 's/{.*totalCount":"*\([0-9a-zA-Z]*\)"*,*.*}/\1/' );
+			#if [[ \${USER_FOUND} == 1 ]]; then
+			#	logger "...${USER_REALNAME} exists in JumpCloud."
+			#else
+			#	logger "...We will now add ${USER_REALNAME} to JumpCloud."
+			#	curl -d "{\"email\" : \"${USER}${EMAIL_DOMAIN}\", \"username\" : \"${USER}\", \"password\" : \"${USER_PWD}\" }" -X 'POST' -H 'Content-Type: application/json' -H 'Accept: application/json' -H "x-api-key: ${API_KEY}" "https://console.jumpcloud.com/api/systemusers"
+			#	sleep 3
+			#fi
+			#logger ""
+	USER_KEY=\$( curl -v --silent -d "{\"filter\": [{\"username\" : \"${USER}\"}]}" -H 'Content-Type: application/json' -H "x-api-key: ${API_KEY}" "https://console.jumpcloud.com/api/search/systemusers" --stderr - | awk -F":" -v RS="," '\$1~/"_id"/ {print \$2}' | sed 's/^"//' | sed 's/".*//' | awk -F"\n" -v RS="" '{print \$NF}' );
+	logger "...${USER_REALNAME}'s userKey is: \${USER_KEY}"
+	# In JumpCloud add the user to the machine
+	curl -d "{ \"add\" : [\"\${SYSTEM_KEY}\"], \"remove\" : [] }" -X 'PUT' -H 'Content-Type: application/json' -H 'Accept: application/json' -H "x-api-key: ${API_KEY}" "https://console.jumpcloud.com/api/systemusers/\${USER_KEY}/systems"
+	logger "...Added ${USER_REALNAME} as a user of this machine in JC."
+	sleep 3
+	# In JumpCloud make the user admin on the machine
+	curl -d "{ \"\${SYSTEM_KEY}\": { \"_id\": \"sudoerID\", \"sudoEnabled\": true, \"sudoWithoutPassword\": false }}" -X 'PUT' -H 'Content-Type: application/json' -H 'Accept: application/json' -H "x-api-key: ${API_KEY}" "https://console.jumpcloud.com/api/systemusers/\${USER_KEY}/systems/sudoers"
+	logger "...Made ${USER_REALNAME} admin on their own machine via JC."
+	sleep 3
+fi
+PSTSCRPT
+fi
+
+# Conditionally use fdesetup to activate FileVault
+# Creates user plist for fdesetup
 if [[ ${FV_POST_FLAG} == "yes" ]]; then
-	# Create second post-run LaunchDaemon to enable FileVault
-	cat >> "${TARGET}"/var/firstpost.sh <<FIRST
-	cat > /tmp/com.learningobjects.secondpost.plist <<SECOND
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>com.learningobjects.firstpost</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/var/secondpost.sh</string>
-	</array>
-	<key>RunAtLoad</key>
-	<true/>
-</dict>
-</plist>
-SECOND
-		cat >> /tmp/fvusers.plist <<SECOND
+	cat > "${TARGET}"/usr/local/fvusers.plist <<PSTSCRPTFVU
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -485,12 +627,10 @@ SECOND
 <string>${ADMIN}</string>
 <key>Password</key>
 <string>${ADMIN_PWD}</string>
-SECOND
-FIRST
+PSTSCRPTFVU
 	HAS_USER=$( ls "${NODE_SEARCH}" | grep ${USER} )
 	if [[ -z ${HAS_USER} ]] && [[ ${USER_CREATE} == "yes" ]] && [[ ${USER} != "setup" ]]; then
-		cat >> "${TARGET}"/var/firstpost.sh <<FIRST
-		cat >> /tmp/fvusers.plist <<SECOND
+		cat >> "${TARGET}"/usr/local/fvusers.plist <<PSTSCRPTFVU
 <key>AdditionalUsers</key>
 <array>
     <dict>
@@ -500,79 +640,51 @@ FIRST
         <string>${USER_PWD}</string>
     </dict>
 </array>
-SECOND
-FIRST
+PSTSCRPTFVU
 	fi
-	cat >> "${TARGET}"/var/firstpost.sh <<FIRST
-	cat >> /tmp/fvusers.plist <<SECOND
+	cat >> "${TARGET}"/usr/local/fvusers.plist <<PSTSCRPTFVU
 </dict>
 </plist>
-SECOND
-FIRST
-	cat >> "${TARGET}"/var/firstpost.sh <<FIRST
-	cat >> /tmp/secondpost.sh <<SECOND
-fdesetup enable -keychain -inputplist < /var/fvusers.plist -norecoverykey
-logger "SP: Encryption enabled."
+PSTSCRPTFVU
+	cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
+chmod 644 /usr/local/fvusers.plist
+chown root:wheel /usr/local/fvusers.plist
+fdesetup enable -keychain -inputplist < /usr/local/fvusers.plist -norecoverykey
+logger "Encryption has been enabled."
 sleep 10
-# rm /var/fvusers.plist
-mv /var/fvusers.plist /Users/Shared/
+${POSTFILE_HANDLING} /usr/local/fvusers.plist "${POSTFILE_MV}"
 sleep 1
-SECOND
-FIRST
+PSTSCRPT
 fi
 
-	cat >> "${TARGET}"/var/firstpost.sh <<FIRST
-	cat >> /tmp/secondpost.sh <<SECOND
-# rm /Library/LaunchDaemons/com.learningobjects.secondpost.plist
-mv /Library/LaunchDaemons/com.learningobjects.secondpost.plist /Users/Shared
+cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
+# Remove first post script files
+${POSTFILE_HANDLING} /Library/LaunchDaemons/com.learningobjects.pstscrpt.plist "${POSTFILE_MV}"
 sleep 1
-logger "SP: deleted second post script files."
-# rm /var/secondpost.sh
-mv /var/secondpost.sh /Users/Shared
+${POSTFILE_HANDLING} /usr/local/pstscrpt.sh "${POSTFILE_MV}"
 sleep 1
+logger "These post script files have been ${POSTFILE_HANDLING}-ed."
+PSTSCRPT
+
+
+if [[ ${FV_AUTH_RESTART} == "yes" ]]; then
+	cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
+# Allow fdesetup authrestart
+fdesetup authrestart -inputplist < /usr/local/fvauthrestart.plist
+${POSTFILE_HANDLING} /usr/local/fvauthrestart.plist "${POSTFILE_MV}"
+logger "fdesetup authrestart"
+PSTSCRPT
+else
+	cat >> "${TARGET}"/usr/local/pstscrpt.sh <<PSTSCRPT
 # Reboot!
 reboot
-SECOND
-FIRST
-
-
-# Last section of post-run script
-cat >> "${TARGET}"/var/firstpost.sh <<FIRST
-# Kick off Munki on next reboot
-touch "${TARGET}/Users/Shared/.com.googlecode.munki.checkandinstallatstartup"
-# Delay the script until Managed Software is done running
-munki_run(){
-	ps axg | grep -v grep | grep 'managedsoftwareupdate' > /dev/null
-}
-while munki_run
-	do sleep 30
-done
-# Move second post files into place and set permissions
-mv /tmp/com.learningobjects.secondpost.plist /Library/LaunchDaemons/
-mv /tmp/secondpost.sh /var/
-chmod 755 /var/secondpost.sh
-chmod 644 /Library/LaunchDaemons/com.learningobjects.secondpost.plist
-chown root:wheel /var/secondpost.sh /Library/LaunchDaemons/com.learningobjects.secondpost.plist
-if [ -e /tmp/fvusers.plist ]; then
-	mv /tmp/fvusers.plist /var/
-	chmod 644 /var/fvusers.plist
-	chown root:wheel /var/fvusers.plist
+logger "Standard reboot."
+PSTSCRPT
 fi
-sleep 1
-# Remove first post scrip files
-# rm /Library/LaunchDaemons/com.learningobjects.firstpost.plist
-mv /Library/LaunchDaemons/com.learningobjects.firstpost.plist /Users/Shared/
-logger "FP: deleted first post script files."
-# rm /var/firstpost.sh
-mv /var/firstpost.sh /Users/Shared
-sleep 1
-# Reboot!
-reboot
-FIRST
 
-chmod 755 "${TARGET}"/var/firstpost.sh
-chmod 644 "${TARGET}"/Library/LaunchDaemons/com.learningobjects.firstpost.plist
-chown root:wheel "${TARGET}"/var/firstpost.sh "${TARGET}"/Library/LaunchDaemons/com.learningobjects.firstpost.plist
+chmod 755 "${TARGET}"/usr/local/pstscrpt.sh
+chown root:wheel "${TARGET}"/usr/local/pstscrpt.sh
+
 logger ""
 logger "Follow up scripts and LaunchDaemons installed on \"${TARGET}\"; they will run first-thing on reboot."
 logger ""
@@ -586,14 +698,14 @@ sleep 1
 logger "------------ AND IN CLOSING ------------"
 logger ""
 
-logger "An installer log can be found at ${TARGET}/${LOGLOC}/ called ${NAME}-${LOG}"
+logger "An installer log can be found at ${TARGET}/${LOGLOC}/ called ${COMP_NAME}-${LOG}"
 logger ""
 logger "This Munki Setup Script will now exit and reboot."
 logger ""
-cp "${INSTALLERS}"/${LOG} "${TARGET}"/${LOGLOC}/${NAME}-${LOG}
+cp "${INSTALLERS}"/${LOG} "${TARGET}/${LOGLOC}/${COMP_NAME}-${LOG}"
 rm "${INSTALLERS}"/${LOG}
-chown root:wheel "${TARGET}"/${LOGLOC}/${NAME}-${LOG}
-chmod 644 "${TARGET}"/${LOGLOC}/${NAME}-${LOG}
+chown root:wheel "${TARGET}/${LOGLOC}/${COMP_NAME}-${LOG}"
+chmod 644 "${TARGET}/${LOGLOC}/${COMP_NAME}-${LOG}"
 
 # Re-enable GateKeeper tech; MunkiTools is not signed...
 if [ ${OS} == OSX ]; then
@@ -601,11 +713,16 @@ if [ ${OS} == OSX ]; then
 fi
 
 sleep 5
-reboot
+if [[ ${FV_AUTH_RESTART} == "yes" ]] && [ ${OS} == OSX ]; then
+	# Allow fdesetup authrestart
+	fdesetup authrestart -inputplist < /usr/local/fvauthrestart.plist
+else
+	reboot
+fi
 
 # Script cobbled together by Douglas Nerad. Any questions please contact him at
-#					dnerad[a]learningobjects[p]com or douglas[a]nerad[p]org
-# Script version:	1.0 (20150623). Only works on full OSX machine. Includes MunkiTools
+#						dnerad[a]learningobjects[p]com or douglas[a]nerad[p]org
+# Script versions:	1.0 (20150623). Only works on full OSX machine. Includes MunkiTools
 #						installation and configuration, MunkiEnroll, admin and user
 #						creation and FileVaultMaster key installation. Process includes
 #						discovering the script path and renaming the computer. Includes
@@ -628,3 +745,14 @@ reboot
 #						post-script section so there's only one set (previously two).
 #						Changed user creation to happen after Munki run the first time so
 #						global user settings can be applied.
+#					1.6 (20160606). Fixed issue where Filevault might already be enabled
+#						on the machine preventing smooth reboots of post-run scripts.
+#						Fixed an issue where if date was off by too much the we couldn't
+#						curl the latest Munki build (SSL fail). Changed post script
+#						default directory from /var to /usr/local to avoid OS 10.11 SIP
+#						problems. Added variables on how to handle post script files.
+#					1.7 (20160613). Refactored post scripts creation to a single stage.
+#						Added JumpCloud support; to create the user in JC (needs work!),
+#						install the client, add the machine, add to a default tag, add the
+#						user to the machine, and make the user admin of their machine.
+#					1.8 (2016xxxx). Need to readdress the munki-enroll process.
