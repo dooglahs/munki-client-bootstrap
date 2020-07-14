@@ -1,6 +1,9 @@
 # munki-client-bootstrap.sh
 On a Mac computer with an existing Munki Server, this bash script installs MunkiTools client and its base settings, then optionally munki-enroll, the local admin and user, FileVault, JumpCloud and a few other items. This is essentially thin imaging utilizing Munki on a computer fresh out of the box or already in production.
 
+## NOTE:
+This project is pretty much a legacy project at this point. Leaving in place in case some of the functionality is useful in the future.
+
 # Specifically...
 ## munki-client-bootstrap.sh follows this workflow:
 
